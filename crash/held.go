@@ -112,7 +112,7 @@ func main() {
 
 	var wg sync.WaitGroup
 	for i := 0; i < threads; i++ {
-		wg.Add(1)
+		wg.Add(5)
 		go attack(target, duration, &wg)
 	}
 
